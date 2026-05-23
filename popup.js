@@ -1,4 +1,4 @@
-/* popup.js - Pornhub Shorties Downloader Popup Logic (Native Messaging Integrated) */
+/* popup.js - Pornhub Shorties Downloader Popup Logic */
 
 document.addEventListener('DOMContentLoaded', function () {
   let activeVideoId = '';
@@ -17,6 +17,11 @@ document.addEventListener('DOMContentLoaded', function () {
   const conversionResult = document.getElementById('conversion-result');
   const convertedCommandCodeEl = document.getElementById('converted-command-code');
 
+  const queuePanel = document.getElementById('queue-panel');
+  const queueListEl = document.getElementById('queue-list');
+  const queueCountEl = document.getElementById('queue-count');
+  const btnClearFinished = document.getElementById('btn-clear-finished');
+
   const toastEl = document.getElementById('popup-toast');
   let toastTimeout = null;
 
@@ -32,7 +37,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (match && match[1]) {
           activeVideoId = match[1];
 
-          // Parse host
           try {
             const urlObj = new URL(url);
             activeHost = urlObj.host;
@@ -42,11 +46,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
           activeEmbedUrl = `https://${activeHost}/embed/${activeVideoId}`;
           const commandText = `yt-dlp "${activeEmbedUrl}"`;
-
-          // Clean up tab title
           const cleanTitle = title.replace(/\s*-\s*Pornhub\.com/gi, '');
 
-          // Update active panel UI
           activeVideoTitleEl.textContent = cleanTitle;
           activeCommandCodeEl.textContent = commandText;
           activeTabPanel.classList.remove('hidden');
@@ -58,9 +59,7 @@ document.addEventListener('DOMContentLoaded', function () {
   // 2. Manual URL Converter
   btnConvert.addEventListener('click', handleManualConversion);
   urlInput.addEventListener('keypress', function (e) {
-    if (e.key === 'Enter') {
-      handleManualConversion();
-    }
+    if (e.key === 'Enter') handleManualConversion();
   });
 
   function handleManualConversion() {
@@ -70,37 +69,26 @@ document.addEventListener('DOMContentLoaded', function () {
     let videoId = '';
     let host = 'cn.pornhub.com';
 
-    // Check if it's a URL
     if (rawVal.includes('shorties/')) {
       const match = rawVal.match(/\/shorties\/([a-zA-Z0-9]+)/i);
-      if (match && match[1]) {
-        videoId = match[1];
-      }
-      // Extract host
+      if (match && match[1]) videoId = match[1];
       try {
         let urlWithProtocol = rawVal;
         if (!rawVal.startsWith('http://') && !rawVal.startsWith('https://')) {
           urlWithProtocol = 'https://' + rawVal;
         }
-        const urlObj = new URL(urlWithProtocol);
-        host = urlObj.host;
+        host = new URL(urlWithProtocol).host;
       } catch (e) {
         host = 'cn.pornhub.com';
       }
-    } else {
-      // Treat as plain ID
-      const plainIdMatch = rawVal.match(/^[a-zA-Z0-9]+$/);
-      if (plainIdMatch) {
-        videoId = rawVal;
-      }
+    } else if (/^[a-zA-Z0-9]+$/.test(rawVal)) {
+      videoId = rawVal;
     }
 
     if (videoId) {
       convertedVideoId = videoId;
       convertedEmbedUrl = `https://${host}/embed/${convertedVideoId}`;
-      const commandText = `yt-dlp "${convertedEmbedUrl}"`;
-
-      convertedCommandCodeEl.textContent = commandText;
+      convertedCommandCodeEl.textContent = `yt-dlp "${convertedEmbedUrl}"`;
       conversionResult.classList.remove('hidden');
       urlInput.style.borderColor = '';
     } else {
@@ -110,136 +98,153 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   // 3. Setup Button Event Listeners
-  // Active Tab panel actions
-  document.getElementById('btn-active-download').addEventListener('click', function () {
-    const btn = document.getElementById('btn-active-download');
-    downloadVideo(activeEmbedUrl, btn);
+  document.getElementById('btn-active-download').addEventListener('click', () => enqueueDownload(activeEmbedUrl));
+  document.getElementById('btn-active-copy-cmd').addEventListener('click', () => copyText(`yt-dlp "${activeEmbedUrl}"`, '已复制 yt-dlp 下载命令！'));
+  document.getElementById('btn-active-copy-url').addEventListener('click', () => copyText(activeEmbedUrl, '已复制 Embed 播放链接！'));
+  document.getElementById('btn-active-open').addEventListener('click', () => openInNewTab(activeEmbedUrl));
+
+  document.getElementById('btn-converted-download').addEventListener('click', () => enqueueDownload(convertedEmbedUrl));
+  document.getElementById('btn-converted-copy-cmd').addEventListener('click', () => copyText(`yt-dlp "${convertedEmbedUrl}"`, '已复制 yt-dlp 下载命令！'));
+  document.getElementById('btn-converted-copy-url').addEventListener('click', () => copyText(convertedEmbedUrl, '已复制 Embed 播放链接！'));
+  document.getElementById('btn-converted-open').addEventListener('click', () => openInNewTab(convertedEmbedUrl));
+
+  btnClearFinished.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'clear-finished' }, () => void chrome.runtime.lastError);
   });
 
-  document.getElementById('btn-active-copy-cmd').addEventListener('click', function () {
-    const commandText = `yt-dlp "${activeEmbedUrl}"`;
-    copyText(commandText, '已复制 yt-dlp 下载命令！');
-  });
+  // ---- Queue: fetch + render + live update ----
 
-  document.getElementById('btn-active-copy-url').addEventListener('click', function () {
-    copyText(activeEmbedUrl, '已复制 Embed 播放链接！');
-  });
+  function enqueueDownload(url) {
+    if (!url) {
+      showToast('未识别到视频链接');
+      return;
+    }
+    const proxy = (proxyInput && proxyInput.value.trim()) || '';
+    const bypassSsl = bypassSslCheckbox ? bypassSslCheckbox.checked : true;
 
-  document.getElementById('btn-active-open').addEventListener('click', function () {
-    openInNewTab(activeEmbedUrl);
-  });
-
-  // Converted panel actions
-  document.getElementById('btn-converted-download').addEventListener('click', function () {
-    const btn = document.getElementById('btn-converted-download');
-    downloadVideo(convertedEmbedUrl, btn);
-  });
-
-  document.getElementById('btn-converted-copy-cmd').addEventListener('click', function () {
-    const commandText = `yt-dlp "${convertedEmbedUrl}"`;
-    copyText(commandText, '已复制 yt-dlp 下载命令！');
-  });
-
-  document.getElementById('btn-converted-copy-url').addEventListener('click', function () {
-    copyText(convertedEmbedUrl, '已复制 Embed 播放链接！');
-  });
-
-  document.getElementById('btn-converted-open').addEventListener('click', function () {
-    openInNewTab(convertedEmbedUrl);
-  });
-
-  let activeDownloadButton = null;
-
-  // Listen to messages from background service worker (progress/success/error)
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (!activeDownloadButton) return;
-      
-      if (msg.status === 'progress') {
-        const percentage = msg.percentage || '0';
-        activeDownloadButton.innerHTML = `
-          <svg class="btn-icon" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.25" fill="none" stroke-width="3"></circle>
-            <path d="M4 12a8 8 0 018-8" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
-          </svg>
-          正在下载: ${percentage}%
-        `;
-      } else if (msg.status === 'success') {
-        resetDownloadButton(activeDownloadButton);
-        showToast('下载成功！已保存至系统的 Downloads 目录。');
-        activeDownloadButton = null;
-      } else if (msg.status === 'error') {
-        resetDownloadButton(activeDownloadButton);
-        showToast(`下载失败: ${msg.message || '未知错误'}`);
-        activeDownloadButton = null;
-      } else if (msg.status === 'disconnected') {
-        if (activeDownloadButton) {
-          resetDownloadButton(activeDownloadButton);
-          showToast(`本地连接断开: ${msg.message}`);
-          activeDownloadButton = null;
+    chrome.runtime.sendMessage(
+      { action: 'download', url, proxy, bypassSsl },
+      (res) => {
+        void chrome.runtime.lastError;
+        if (!res) return;
+        if (res.ok) {
+          showToast('已加入下载队列');
+        } else if (res.reason === 'duplicate') {
+          showToast(res.state === 'running' ? '该视频正在下载中' : '该视频已在队列中');
+        } else if (res.reason === 'empty-url') {
+          showToast('链接为空，无法下载');
+        } else {
+          showToast(`加入队列失败: ${res.message || res.reason || '未知错误'}`);
         }
       }
+    );
+  }
+
+  function renderQueue(taskMap) {
+    const items = Object.values(taskMap || {});
+    // newest first
+    items.sort((a, b) => {
+      const order = { running: 0, queued: 1, error: 2, success: 3 };
+      const oa = order[a.state] ?? 9;
+      const ob = order[b.state] ?? 9;
+      if (oa !== ob) return oa - ob;
+      return b.addedAt - a.addedAt;
+    });
+
+    queueCountEl.textContent = String(items.length);
+    queueListEl.innerHTML = '';
+
+    if (items.length === 0) {
+      queuePanel.classList.add('hidden');
+      return;
+    }
+    queuePanel.classList.remove('hidden');
+
+    for (const t of items) {
+      queueListEl.appendChild(buildQueueRow(t));
+    }
+  }
+
+  function buildQueueRow(t) {
+    const li = document.createElement('li');
+    li.className = `queue-item state-${t.state}`;
+
+    const top = document.createElement('div');
+    top.className = 'queue-top';
+
+    const urlEl = document.createElement('span');
+    urlEl.className = 'queue-url';
+    urlEl.textContent = shortenUrl(t.url);
+    urlEl.title = t.url;
+    top.appendChild(urlEl);
+
+    const statusEl = document.createElement('span');
+    statusEl.className = 'queue-status';
+    statusEl.textContent = labelForState(t);
+    top.appendChild(statusEl);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'queue-remove-btn';
+    removeBtn.textContent = t.state === 'running' ? '取消' : '移除';
+    removeBtn.title = '从队列中移除';
+    removeBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ action: 'remove-task', url: t.url }, () => void chrome.runtime.lastError);
+    });
+    top.appendChild(removeBtn);
+
+    li.appendChild(top);
+
+    // progress bar (running) or message line (queued / success / error)
+    if (t.state === 'running' || t.state === 'queued') {
+      const bar = document.createElement('div');
+      bar.className = 'queue-progress';
+      const fill = document.createElement('div');
+      fill.className = 'queue-progress-fill';
+      fill.style.width = `${Math.max(0, Math.min(100, t.percentage || 0))}%`;
+      bar.appendChild(fill);
+      li.appendChild(bar);
+    }
+    if (t.message) {
+      const msg = document.createElement('div');
+      msg.className = 'queue-message';
+      msg.textContent = t.message;
+      li.appendChild(msg);
+    }
+
+    return li;
+  }
+
+  function labelForState(t) {
+    switch (t.state) {
+      case 'queued':  return '排队中';
+      case 'running': return `${(t.percentage || 0).toFixed(0)}%`;
+      case 'success': return '已完成';
+      case 'error':   return '失败';
+      default:        return t.state;
+    }
+  }
+
+  function shortenUrl(url) {
+    try {
+      const u = new URL(url);
+      const tail = u.pathname.split('/').filter(Boolean).pop() || u.pathname;
+      return `${u.host}/…/${tail}`;
+    } catch (_) {
+      return url.length > 60 ? url.slice(0, 57) + '…' : url;
+    }
+  }
+
+  function refreshQueue() {
+    chrome.runtime.sendMessage({ action: 'get-queue' }, (res) => {
+      void chrome.runtime.lastError;
+      if (res && res.tasks) renderQueue(res.tasks);
     });
   }
 
-  function resetDownloadButton(btn) {
-    btn.disabled = false;
-    btn.style.opacity = '';
-    btn.innerHTML = `
-      <svg class="btn-icon" viewBox="0 0 24 24">
-        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
-      </svg>
-      一键本地下载 (yt-dlp)
-    `;
-  }
-
-  // Native Messaging download trigger
-  function downloadVideo(url, buttonEl) {
-    if (activeDownloadButton) {
-      showToast('已有下载任务在后台运行中，请稍候...');
-      return;
-    }
-    
-    activeDownloadButton = buttonEl;
-    buttonEl.disabled = true;
-    buttonEl.style.opacity = '0.6';
-    buttonEl.innerHTML = `
-      <svg class="btn-icon" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;">
-        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.25" fill="none" stroke-width="3"></circle>
-        <path d="M4 12a8 8 0 018-8" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
-      </svg>
-      正在启动下载...
-    `;
-
-    // Inject spin style dynamically if missing
-    if (!document.getElementById('popup-spin-style')) {
-      const style = document.createElement('style');
-      style.id = 'popup-spin-style';
-      style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-      document.head.appendChild(style);
-    }
-
-    showToast('已唤起后台下载，正在解析网页...');
-
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['proxy', 'bypassSsl'], (settings) => {
-        const proxy = settings.proxy || '';
-        const bypassSsl = settings.bypassSsl !== false;
-        chrome.runtime.sendMessage({ 
-          action: 'download', 
-          url: url,
-          proxy: proxy,
-          bypassSsl: bypassSsl
-        });
-      });
-    } else {
-      chrome.runtime.sendMessage({ 
-        action: 'download', 
-        url: url,
-        proxy: '',
-        bypassSsl: true
-      });
-    }
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === 'queue-update') renderQueue(msg.tasks);
+    });
   }
 
   // Helpers
@@ -275,15 +280,13 @@ document.addEventListener('DOMContentLoaded', function () {
     clearTimeout(toastTimeout);
     toastEl.textContent = message;
     toastEl.classList.remove('hidden');
-    toastEl.offsetWidth; // Force reflow
+    toastEl.offsetWidth;
     toastEl.style.opacity = '1';
-    
+
     toastTimeout = setTimeout(() => {
       toastEl.style.opacity = '0';
-      setTimeout(() => {
-        toastEl.classList.add('hidden');
-      }, 200);
-    }, 4500); // 4.5 seconds to ensure errors can be read
+      setTimeout(() => toastEl.classList.add('hidden'), 200);
+    }, 4500);
   }
 
   // 4. Advanced Settings Management
@@ -304,19 +307,13 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   });
 
-  // Load saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get(['proxy', 'bypassSsl'], function (result) {
-      if (result.proxy) {
-        proxyInput.value = result.proxy;
-      }
-      if (result.bypassSsl !== undefined) {
-        bypassSslCheckbox.checked = result.bypassSsl;
-      }
+      if (result.proxy) proxyInput.value = result.proxy;
+      if (result.bypassSsl !== undefined) bypassSslCheckbox.checked = result.bypassSsl;
     });
   }
 
-  // Save settings when changed
   proxyInput.addEventListener('input', saveSettings);
   bypassSslCheckbox.addEventListener('change', saveSettings);
 
@@ -327,4 +324,7 @@ document.addEventListener('DOMContentLoaded', function () {
       chrome.storage.local.set({ proxy: proxyVal, bypassSsl: bypassSslVal });
     }
   }
+
+  // Initial queue load
+  refreshQueue();
 });

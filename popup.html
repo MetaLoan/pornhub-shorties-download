@@ -114,9 +114,18 @@
       </div>
     </section>
 
+    <!-- Download Queue Panel -->
+    <section id="queue-panel" class="converter-panel hidden">
+      <div class="queue-header">
+        <span class="input-label" style="margin: 0;">下载队列 <span id="queue-count" class="queue-count">0</span></span>
+        <button class="queue-clear-btn" id="btn-clear-finished" title="清除已完成 / 失败的任务">清除已完成</button>
+      </div>
+      <ul id="queue-list" class="queue-list"></ul>
+    </section>
+
     <!-- Footer Guide -->
     <footer class="app-footer">
-      使用说明：配合命令行下载器 <code class="code-inline">yt-dlp</code> 使用效果最佳。
+      使用说明：配合命令行下载器 <code class="code-inline">yt-dlp</code> 使用效果最佳。最多并发 3 个下载。
     </footer>
 
     <!-- Toast Notification -->

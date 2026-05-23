@@ -301,6 +301,147 @@ body {
   display: none !important;
 }
 
+/* Download Queue */
+.queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.queue-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 6px;
+  margin-left: 4px;
+  background-color: rgba(255, 153, 0, 0.15);
+  color: var(--accent-orange);
+  border: 1px solid rgba(255, 153, 0, 0.25);
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.queue-clear-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.queue-clear-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.queue-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.queue-item {
+  background-color: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.queue-item.state-running {
+  border-color: rgba(255, 153, 0, 0.3);
+}
+
+.queue-item.state-success {
+  border-color: rgba(80, 200, 120, 0.3);
+}
+
+.queue-item.state-error {
+  border-color: rgba(255, 80, 80, 0.35);
+}
+
+.queue-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-url {
+  flex: 1;
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-status {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.state-running .queue-status { color: var(--accent-orange); }
+.state-success .queue-status { color: #50c878; }
+.state-error   .queue-status { color: #ff5050; }
+
+.queue-remove-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.queue-remove-btn:hover {
+  color: #ff5050;
+  border-color: rgba(255, 80, 80, 0.35);
+  background-color: rgba(255, 80, 80, 0.08);
+}
+
+.queue-progress {
+  width: 100%;
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.queue-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #FF9900, #FF5500);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.queue-message {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.state-error .queue-message { color: #ff8080; }
+
 /* Toast */
 .toast {
   position: fixed;
