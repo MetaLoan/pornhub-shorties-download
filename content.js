@@ -129,8 +129,8 @@
     if (!codeBoxEl) return;
     const host = window.location.host;
     const embedUrl = `https://${host}/embed/${currentVideoId}`;
-    const commandText = `yt-dlp "${embedUrl}"`;
-    codeBoxEl.textContent = commandText;
+    codeBoxEl.textContent = `yt-dlp "${embedUrl}"`;
+    pullQueueOnce();
   }
 
   // 5. Toggle panel visibility
@@ -143,105 +143,125 @@
     } else {
       panelEl.classList.add('show');
       fabEl.classList.add('active');
+      pullQueueOnce();
     }
   }
 
-  let activeDownloading = false;
-
-  // Listen to messages from background service worker
-  chrome.runtime.onMessage.addListener((msg) => {
-    const btn = document.getElementById('ph-btn-direct-download');
-    if (!btn) return;
-    
-    if (msg.status === 'progress') {
-      const percentage = msg.percentage || '0';
-      btn.innerHTML = `
-        <svg class="anim-rotate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="animation: spin 1s linear infinite;">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.25"></circle>
-          <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-linecap="round"></path>
-        </svg>
-        正在下载: ${percentage}%
-      `;
-    } else if (msg.status === 'success') {
-      resetPageButton(btn);
-      showToast('下载成功！视频已保存至系统的 Downloads 目录。');
-      activeDownloading = false;
-    } else if (msg.status === 'error') {
-      resetPageButton(btn);
-      showToast(`下载失败: ${msg.message || '未知错误'}`);
-      activeDownloading = false;
-    } else if (msg.status === 'disconnected') {
-      if (activeDownloading) {
-        resetPageButton(btn);
-        showToast(`本地连接断开: ${msg.message}`);
-        activeDownloading = false;
-      }
-    }
-  });
-
-  function resetPageButton(btn) {
-    btn.disabled = false;
-    btn.style.opacity = '';
-    btn.innerHTML = `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
-      </svg>
-      一键本地下载 (yt-dlp)
-    `;
+  // The button reflects the state of the task for the *current page's* URL.
+  // It is driven entirely by queue-update broadcasts from background.
+  function currentEmbedUrl() {
+    const host = window.location.host;
+    return `https://${host}/embed/${currentVideoId}`;
   }
 
-  // 6. Action: Direct Download
-  function triggerDirectDownload() {
-    const btn = document.getElementById('ph-btn-direct-download');
-    if (!btn || btn.disabled || activeDownloading) {
-      if (activeDownloading) {
-        showToast('已有下载任务在后台运行中，请稍候...');
-      }
-      return;
-    }
-
-    activeDownloading = true;
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    btn.innerHTML = `
-      <svg class="anim-rotate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="animation: spin 1s linear infinite;">
-        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.25"></circle>
-        <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-linecap="round"></path>
-      </svg>
-      正在启动下载...
-    `;
-    
-    // Add rotate animation styles dynamically if not present
+  function ensureSpinStyle() {
     if (!document.getElementById('ph-spin-style')) {
       const style = document.createElement('style');
       style.id = 'ph-spin-style';
       style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
       document.head.appendChild(style);
     }
+  }
 
-    showToast('已唤起后台下载，正在解析网页...');
+  function renderButton(task) {
+    const btn = document.getElementById('ph-btn-direct-download');
+    if (!btn) return;
+    ensureSpinStyle();
 
-    const host = window.location.host;
-    const embedUrl = `https://${host}/embed/${currentVideoId}`;
+    if (!task || task.state === 'success' || task.state === 'error') {
+      btn.disabled = false;
+      btn.style.opacity = '';
+      btn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+        </svg>
+        一键本地下载 (yt-dlp)
+      `;
+      return;
+    }
+
+    const spinner = `
+      <svg class="anim-rotate" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="animation: spin 1s linear infinite;">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.25"></circle>
+        <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-linecap="round"></path>
+      </svg>
+    `;
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    if (task.state === 'queued') {
+      btn.innerHTML = `${spinner} 排队中…`;
+    } else {
+      const pct = Math.max(0, Math.min(100, task.percentage || 0));
+      btn.innerHTML = `${spinner} 下载中 ${pct.toFixed(0)}%`;
+    }
+  }
+
+  // Track last seen state per URL so we can fire one-shot toasts on transition
+  const lastSeenState = new Map();
+  function reflectQueue(taskMap) {
+    const url = currentEmbedUrl();
+    const task = taskMap ? taskMap[url] : null;
+    renderButton(task);
+
+    const prev = lastSeenState.get(url);
+    const now = task ? task.state : null;
+    if (prev !== now) {
+      lastSeenState.set(url, now);
+      if (now === 'success') {
+        showToast('下载成功！视频已保存至系统的 Downloads 目录。');
+      } else if (now === 'error') {
+        showToast(`下载失败: ${(task && task.message) || '未知错误'}`);
+      }
+    }
+  }
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'queue-update') reflectQueue(msg.tasks);
+  });
+
+  function pullQueueOnce() {
+    try {
+      chrome.runtime.sendMessage({ action: 'get-queue' }, (res) => {
+        void chrome.runtime.lastError;
+        if (res && res.tasks) reflectQueue(res.tasks);
+      });
+    } catch (_) {}
+  }
+
+  // 6. Action: Direct Download
+  function triggerDirectDownload() {
+    const embedUrl = currentEmbedUrl();
+    const sendDownload = (proxy, bypassSsl) => {
+      try {
+        chrome.runtime.sendMessage(
+          { action: 'download', url: embedUrl, proxy, bypassSsl },
+          (res) => {
+            void chrome.runtime.lastError;
+            if (!res) {
+              showToast('后台未响应，请重试');
+              return;
+            }
+            if (res.ok) {
+              showToast('已加入下载队列');
+            } else if (res.reason === 'duplicate') {
+              showToast(res.state === 'running' ? '该视频正在下载中' : '该视频已在队列中');
+            } else {
+              showToast(`加入队列失败: ${res.message || res.reason || '未知错误'}`);
+            }
+            pullQueueOnce();
+          }
+        );
+      } catch (e) {
+        showToast(`无法连接到后台: ${e.message}`);
+      }
+    };
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get(['proxy', 'bypassSsl'], (settings) => {
-        const proxy = settings.proxy || '';
-        const bypassSsl = settings.bypassSsl !== false;
-        chrome.runtime.sendMessage({ 
-          action: 'download', 
-          url: embedUrl,
-          proxy: proxy,
-          bypassSsl: bypassSsl
-        });
+        sendDownload(settings.proxy || '', settings.bypassSsl !== false);
       });
     } else {
-      chrome.runtime.sendMessage({ 
-        action: 'download', 
-        url: embedUrl,
-        proxy: '',
-        bypassSsl: true
-      });
+      sendDownload('', true);
     }
   }
 
