@@ -50,9 +50,25 @@ function safeSend(sendFn) {
   } catch (_) {}
 }
 
+const SHORTIES_TAB_FILTER = {
+  url: ['*://*.pornhub.com/shorties/*', '*://*.pornhub.premium/shorties/*'],
+};
+
 function broadcastQueue() {
   const snapshot = serializeTasks();
-  safeSend(() => chrome.runtime.sendMessage({ type: 'queue-update', tasks: snapshot }));
+  const payload = { type: 'queue-update', tasks: snapshot };
+  safeSend(() => chrome.runtime.sendMessage(payload));
+  // chrome.runtime.sendMessage does NOT reach content scripts.
+  // Fan out via chrome.tabs.sendMessage so the in-page panel updates too.
+  try {
+    chrome.tabs.query(SHORTIES_TAB_FILTER, (tabs) => {
+      void chrome.runtime.lastError;
+      if (!tabs) return;
+      for (const t of tabs) {
+        safeSend(() => chrome.tabs.sendMessage(t.id, payload));
+      }
+    });
+  } catch (_) {}
 }
 
 // ---------- Persistence ----------

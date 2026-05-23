@@ -83,6 +83,14 @@
         <button class="ph-shorties-btn ph-shorties-btn-secondary" id="ph-btn-open-embed">
           在新标签页打开视频
         </button>
+
+        <div class="ph-shorties-queue-section" id="ph-queue-section" style="display: none;">
+          <div class="ph-shorties-queue-header">
+            <span class="ph-shorties-section-title" style="margin: 0;">下载队列 <span class="ph-shorties-queue-count" id="ph-queue-count">0</span></span>
+            <button class="ph-shorties-queue-clear" id="ph-btn-clear-finished" title="清除已完成 / 失败的任务">清除已完成</button>
+          </div>
+          <ul class="ph-shorties-queue-list" id="ph-queue-list"></ul>
+        </div>
       </div>
     `;
     document.body.appendChild(panelEl);
@@ -101,6 +109,11 @@
     document.getElementById('ph-btn-copy-cmd').addEventListener('click', copyCommand);
     document.getElementById('ph-btn-copy-url').addEventListener('click', copyEmbedUrl);
     document.getElementById('ph-btn-open-embed').addEventListener('click', openEmbed);
+    document.getElementById('ph-btn-clear-finished').addEventListener('click', () => {
+      try {
+        chrome.runtime.sendMessage({ action: 'clear-finished' }, () => void chrome.runtime.lastError);
+      } catch (_) {}
+    });
 
     // Close panel when clicking outside
     document.addEventListener('click', function (e) {
@@ -202,6 +215,7 @@
     const url = currentEmbedUrl();
     const task = taskMap ? taskMap[url] : null;
     renderButton(task);
+    renderQueueList(taskMap);
 
     const prev = lastSeenState.get(url);
     const now = task ? task.state : null;
@@ -212,6 +226,101 @@
       } else if (now === 'error') {
         showToast(`下载失败: ${(task && task.message) || '未知错误'}`);
       }
+    }
+  }
+
+  function renderQueueList(taskMap) {
+    const section = document.getElementById('ph-queue-section');
+    const list = document.getElementById('ph-queue-list');
+    const countEl = document.getElementById('ph-queue-count');
+    if (!section || !list || !countEl) return;
+
+    const items = Object.values(taskMap || {});
+    items.sort((a, b) => {
+      const order = { running: 0, queued: 1, error: 2, success: 3 };
+      const oa = order[a.state] ?? 9;
+      const ob = order[b.state] ?? 9;
+      if (oa !== ob) return oa - ob;
+      return b.addedAt - a.addedAt;
+    });
+
+    countEl.textContent = String(items.length);
+    list.innerHTML = '';
+    if (items.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+
+    for (const t of items) list.appendChild(buildQueueRow(t));
+  }
+
+  function buildQueueRow(t) {
+    const li = document.createElement('li');
+    li.className = `ph-shorties-queue-item ph-state-${t.state}`;
+
+    const top = document.createElement('div');
+    top.className = 'ph-shorties-queue-top';
+
+    const urlEl = document.createElement('span');
+    urlEl.className = 'ph-shorties-queue-url';
+    urlEl.textContent = shortenUrl(t.url);
+    urlEl.title = t.url;
+    top.appendChild(urlEl);
+
+    const statusEl = document.createElement('span');
+    statusEl.className = 'ph-shorties-queue-status';
+    statusEl.textContent = labelForState(t);
+    top.appendChild(statusEl);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'ph-shorties-queue-remove';
+    removeBtn.textContent = t.state === 'running' ? '取消' : '移除';
+    removeBtn.addEventListener('click', () => {
+      try {
+        chrome.runtime.sendMessage({ action: 'remove-task', url: t.url }, () => void chrome.runtime.lastError);
+      } catch (_) {}
+    });
+    top.appendChild(removeBtn);
+
+    li.appendChild(top);
+
+    if (t.state === 'running' || t.state === 'queued') {
+      const bar = document.createElement('div');
+      bar.className = 'ph-shorties-queue-progress';
+      const fill = document.createElement('div');
+      fill.className = 'ph-shorties-queue-progress-fill';
+      fill.style.width = `${Math.max(0, Math.min(100, t.percentage || 0))}%`;
+      bar.appendChild(fill);
+      li.appendChild(bar);
+    }
+    if (t.message) {
+      const msg = document.createElement('div');
+      msg.className = 'ph-shorties-queue-message';
+      msg.textContent = t.message;
+      li.appendChild(msg);
+    }
+
+    return li;
+  }
+
+  function labelForState(t) {
+    switch (t.state) {
+      case 'queued':  return '排队中';
+      case 'running': return `${(t.percentage || 0).toFixed(0)}%`;
+      case 'success': return '已完成';
+      case 'error':   return '失败';
+      default:        return t.state;
+    }
+  }
+
+  function shortenUrl(url) {
+    try {
+      const u = new URL(url);
+      const tail = u.pathname.split('/').filter(Boolean).pop() || u.pathname;
+      return `${u.host}/…/${tail}`;
+    } catch (_) {
+      return url.length > 50 ? url.slice(0, 47) + '…' : url;
     }
   }
 
