@@ -1,92 +1,272 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-install_host.py - Installer to register the Native Messaging Host in Google Chrome
+install_host.py — Cross-platform installer for the Shorties Downloader
+native messaging host.
+
+Registers `com.shorties.downloader` so that the browser extension (with
+the fixed ID baked into manifest.json) can invoke the bundled host.
+
+Supported targets:
+  - Windows: writes HKCU registry values for Chrome and Edge
+  - macOS  : drops the JSON manifest into the per-user NativeMessagingHosts dirs
+  - Linux  : same idea, into ~/.config/google-chrome/NativeMessagingHosts/ etc.
+
+Usage (after running build_host.py and producing dist/shorties_host[.exe]):
+    python3 install_host.py            # auto-detect platform, install for all browsers
+    python3 install_host.py --uninstall
+    python3 install_host.py --host-binary /custom/path/to/shorties_host
 """
 
-import os
-import sys
+import argparse
 import json
-import re
-import subprocess
+import os
+import platform
+import shutil
+import sys
+from pathlib import Path
 
 HOST_NAME = "com.shorties.downloader"
-TARGET_DIRS = [
-    os.path.expanduser("~/Library/Application Support/Google/Chrome/NativeMessagingHosts"),
-    os.path.expanduser("~/Library/Application Support/Microsoft Edge/NativeMessagingHosts"),
-    os.path.expanduser("~/Library/Application Support/Microsoft/Edge/NativeMessagingHosts")
-]
+# This is the stable extension ID derived from the public key baked into
+# manifest.json's "key" field. Keep these in sync.
+EXTENSION_ID = "dnhlkggbdnpljeii"
+ALLOWED_ORIGINS = [f"chrome-extension://{EXTENSION_ID}/"]
 
-def main():
-    print("=== Shorties Downloader Native Helper Installer ===")
-    
-    # 1. Ask for Extension ID
-    extension_id = ""
-    if len(sys.argv) > 1:
-        extension_id = sys.argv[1].strip()
-        print(f"Using Extension ID from command line: {extension_id}")
-    
-    while not re.match(r"^[a-p]{32}$", extension_id):
-        extension_id = input("请输入您的 Chrome/Edge 扩展 ID: ").strip()
-        if not re.match(r"^[a-p]{32}$", extension_id):
-            print("错误: 扩展 ID 格式不正确。")
+ROOT = Path(__file__).resolve().parent
+SYSTEM = platform.system()
+IS_WINDOWS = SYSTEM == "Windows"
+IS_MACOS = SYSTEM == "Darwin"
+IS_LINUX = SYSTEM == "Linux"
 
-    # 2. Paths Configuration
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    host_script_path = os.path.join(current_dir, "native_host.py")
-    
-    if not os.path.exists(host_script_path):
-        print(f"错误: 未找到 native_host.py，请确保脚本完整。")
+
+# ---------------- Browser locations ---------------- #
+
+def manifest_dirs():
+    """Per-user directories where browsers look for native-messaging manifests."""
+    home = Path.home()
+    if IS_MACOS:
+        base = home / "Library" / "Application Support"
+        return {
+            "Google Chrome": base / "Google" / "Chrome" / "NativeMessagingHosts",
+            "Microsoft Edge": base / "Microsoft Edge" / "NativeMessagingHosts",
+            "Chromium": base / "Chromium" / "NativeMessagingHosts",
+            "Brave": base / "BraveSoftware" / "Brave-Browser" / "NativeMessagingHosts",
+            "Vivaldi": base / "Vivaldi" / "NativeMessagingHosts",
+            "Opera": base / "com.operasoftware.Opera" / "NativeMessagingHosts",
+        }
+    if IS_LINUX:
+        base = home / ".config"
+        return {
+            "Google Chrome": base / "google-chrome" / "NativeMessagingHosts",
+            "Chromium": base / "chromium" / "NativeMessagingHosts",
+            "Microsoft Edge": base / "microsoft-edge" / "NativeMessagingHosts",
+            "Brave": base / "BraveSoftware" / "Brave-Browser" / "NativeMessagingHosts",
+            "Vivaldi": base / "vivaldi" / "NativeMessagingHosts",
+            "Opera": base / "opera" / "NativeMessagingHosts",
+        }
+    # On Windows there is no flat directory — the manifest path is stored as a
+    # registry value, and we point that value at a JSON file we drop here.
+    raise NotImplementedError("manifest_dirs() is filesystem-only — Windows uses registry")
+
+
+WINDOWS_REGISTRY_KEYS = {
+    # browser display -> (HKCU subkey, manifest JSON file basename anchor)
+    "Google Chrome": r"Software\Google\Chrome\NativeMessagingHosts",
+    "Microsoft Edge": r"Software\Microsoft\Edge\NativeMessagingHosts",
+    "Chromium": r"Software\Chromium\NativeMessagingHosts",
+    "Brave": r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+    "Vivaldi": r"Software\Vivaldi\NativeMessagingHosts",
+    "Opera": r"Software\Opera Software\Opera Stable\NativeMessagingHosts",
+}
+
+
+# ---------------- Install location for the binary ---------------- #
+
+def install_root() -> Path:
+    """Per-user directory where we copy the host binary + JSON manifest."""
+    if IS_WINDOWS:
+        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    elif IS_MACOS:
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    return base / "ShortiesDownloader"
+
+
+def default_host_binary() -> Path:
+    """Guess where `dist/` produced the host binary."""
+    sysname, arch = _plat_tags()
+    suffix = ".exe" if IS_WINDOWS else ""
+    tagged = ROOT / "dist" / f"shorties_host-{sysname}-{arch}{suffix}"
+    plain = ROOT / "dist" / f"shorties_host{suffix}"
+    if tagged.exists():
+        return tagged
+    return plain
+
+
+def _plat_tags():
+    if IS_WINDOWS:
+        return "windows", "x64"
+    if IS_MACOS:
+        return "macos", "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    if IS_LINUX:
+        return "linux", "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    return SYSTEM.lower(), platform.machine().lower()
+
+
+# ---------------- Manifest writing ---------------- #
+
+def build_manifest(host_binary_path: Path) -> dict:
+    return {
+        "name": HOST_NAME,
+        "description": "Shorties Downloader Native Helper",
+        "path": str(host_binary_path),
+        "type": "stdio",
+        "allowed_origins": list(ALLOWED_ORIGINS),
+    }
+
+
+def write_manifest_file(target_dir: Path, manifest: dict) -> Path:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    p = target_dir / f"{HOST_NAME}.json"
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    return p
+
+
+# ---------------- Installers per OS ---------------- #
+
+def install_unix(host_binary: Path) -> list:
+    """Drop a copy of the manifest into each browser's NativeMessagingHosts dir."""
+    out = []
+    for browser, d in manifest_dirs().items():
+        try:
+            p = write_manifest_file(d, build_manifest(host_binary))
+            out.append((browser, str(p), "ok"))
+        except Exception as e:
+            out.append((browser, str(d), f"skip: {e}"))
+    return out
+
+
+def install_windows(manifest_json_path: Path) -> list:
+    """Write HKCU registry values pointing at the manifest JSON file."""
+    import winreg  # type: ignore  # Windows-only
+
+    # The manifest file path goes into the registry; the JSON content goes
+    # to a stable filesystem location managed by install_root().
+    out = []
+    for browser, subkey in WINDOWS_REGISTRY_KEYS.items():
+        try:
+            full_key = subkey + "\\" + HOST_NAME
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, full_key) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, str(manifest_json_path))
+            out.append((browser, f"HKCU\\{full_key}", "ok"))
+        except Exception as e:
+            out.append((browser, subkey, f"skip: {e}"))
+    return out
+
+
+def uninstall_unix() -> list:
+    out = []
+    for browser, d in manifest_dirs().items():
+        p = d / f"{HOST_NAME}.json"
+        if p.exists():
+            try:
+                p.unlink()
+                out.append((browser, str(p), "removed"))
+            except Exception as e:
+                out.append((browser, str(p), f"error: {e}"))
+        else:
+            out.append((browser, str(p), "missing"))
+    return out
+
+
+def uninstall_windows() -> list:
+    import winreg  # type: ignore
+
+    out = []
+    for browser, subkey in WINDOWS_REGISTRY_KEYS.items():
+        full_key = subkey + "\\" + HOST_NAME
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, full_key)
+            out.append((browser, f"HKCU\\{full_key}", "removed"))
+        except FileNotFoundError:
+            out.append((browser, full_key, "missing"))
+        except Exception as e:
+            out.append((browser, full_key, f"error: {e}"))
+    return out
+
+
+# ---------------- Top-level ---------------- #
+
+def install(host_binary_arg):
+    src_bin = Path(host_binary_arg).expanduser().resolve() if host_binary_arg else default_host_binary()
+    if not src_bin.exists():
+        print(f"ERROR: host binary not found: {src_bin}", file=sys.stderr)
+        print("Run `python3 build_host.py` first to produce dist/shorties_host[.exe].", file=sys.stderr)
         sys.exit(1)
 
-    # 3. Process each browser directory
-    for target_dir in TARGET_DIRS:
-        print(f"\n正在配置目录: {target_dir}")
-        os.makedirs(target_dir, exist_ok=True)
-        
-        # 4. Copy native_host.py to Target Directory to avoid macOS TCC/sandboxing restrictions
-        import shutil
-        target_script_path = os.path.join(target_dir, "native_host.py")
-        try:
-            shutil.copy2(host_script_path, target_script_path)
-            print(f"成功: 已将 native_host.py 复制到 {target_script_path}")
-        except Exception as e:
-            print(f"错误: 复制 native_host.py 失败: {e}")
-            continue
-        
-        # 5. Generate the Native Messaging JSON Manifest
-        candidate_ids = {extension_id, "ooabbpmambgfgflppmfffmgcebopbjij", "fcbmiimfkmkkkffjlopcpdlgclncnknm", "lbackfeepepegfedmnmcadebimihaemb"}
-        allowed_origins = [f"chrome-extension://{ext_id}/" for ext_id in candidate_ids if ext_id]
+    root = install_root()
+    root.mkdir(parents=True, exist_ok=True)
 
-        manifest_data = {
-            "name": HOST_NAME,
-            "description": "Shorties Downloader Native Helper",
-            "path": target_script_path,
-            "type": "stdio",
-            "allowed_origins": allowed_origins
-        }
-        
-        target_manifest_path = os.path.join(target_dir, f"{HOST_NAME}.json")
-        
-        try:
-            with open(target_manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest_data, f, indent=2, ensure_ascii=False)
-            print(f"成功: 已写入配置文件到 {target_manifest_path}")
-        except Exception as e:
-            print(f"错误: 写入配置文件失败: {e}")
-            continue
+    dst_bin = root / ("shorties_host.exe" if IS_WINDOWS else "shorties_host")
+    shutil.copy2(src_bin, dst_bin)
+    if not IS_WINDOWS:
+        os.chmod(dst_bin, 0o755)
+    print(f"installed binary -> {dst_bin}")
 
-        # 6. Make target script executable
-        try:
-            subprocess.run(["chmod", "+x", target_script_path], check=True)
-            print(f"成功: 已为 {target_script_path} 授予可执行权限。")
-        except Exception as e:
-            print(f"警告: 无法为 {target_script_path} 设置可执行权限: {e}。")
+    manifest_json = write_manifest_file(root, build_manifest(dst_bin))
+    print(f"installed manifest -> {manifest_json}")
 
-    print("\n安装成功完成！")
-    print("重要步骤:")
-    print("1. 如果您在浏览器中打开了相关网页，请在扩展管理页面重新加载本插件。")
-    print("2. 刷新您要下载视频的网页，然后点击“一键本地下载”即可。")
+    print()
+    print("Registering with browsers …")
+    if IS_WINDOWS:
+        results = install_windows(manifest_json)
+    else:
+        results = install_unix(dst_bin)
+
+    for browser, where, status in results:
+        print(f"  [{status:>10}] {browser}: {where}")
+
+    print()
+    print("Done. Reload the extension in your browser, then test a download.")
+
+
+def uninstall():
+    print("Removing browser registrations …")
+    if IS_WINDOWS:
+        results = uninstall_windows()
+    else:
+        results = uninstall_unix()
+    for browser, where, status in results:
+        print(f"  [{status:>10}] {browser}: {where}")
+
+    root = install_root()
+    if root.exists():
+        try:
+            for p in root.iterdir():
+                if p.is_file():
+                    p.unlink()
+            root.rmdir()
+            print(f"removed install dir: {root}")
+        except Exception as e:
+            print(f"  warn: could not fully remove {root}: {e}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--uninstall", action="store_true",
+                    help="Remove the host registration instead of installing.")
+    ap.add_argument("--host-binary", default=None,
+                    help="Path to the prebuilt host binary "
+                         "(default: ./dist/shorties_host[-<plat>-<arch>][.exe]).")
+    args = ap.parse_args()
+
+    if args.uninstall:
+        uninstall()
+    else:
+        install(args.host_binary)
+
 
 if __name__ == "__main__":
     main()

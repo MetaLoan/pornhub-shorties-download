@@ -1,3 +1,16 @@
 .DS_Store
 *.log
 shortiesdownloader.zip
+
+# Extension signing key — NEVER commit private key.
+extension.key.pem
+extension.pub.der
+extension.id.txt
+extension.key.b64.txt
+
+# Build artifacts
+vendor/
+build/
+dist/
+__pycache__/
+*.pyc

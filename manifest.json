@@ -3,6 +3,7 @@
   "name": "Pornhub Shorties Downloader Helper",
   "version": "1.0",
   "description": "一键转换并下载 Pornhub Shorties 短视频，提供 embed 链接与 yt-dlp 快速下载命令",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtN8Vzc7z/MiiZnUZdYbCbYll49Rbxo0tafTsmUSRlO5pkKnkla1mB1LMLWLbOoEx649Jbaoz/JlqLsRcxFO0fKuPXKzxTLIx4RqyvBtIwxmClrN7CpfD1ForrBH/eOUwkLuEnj6f1uVfdetAAbXaSf1ofaqYPknBwAKhiXv3wkT6hDPlq2fkh+bqzX8Tq31ztIS0sboTFHTel2u4owhgo4vo/4Uo8GaIKSgyzcLN7hdX05WwthNbs5CUbocogLY5jlUzlUtm7woiyiPG4HVvekPd+i8jLtUU2AN65/Ok3Cjt3EhG2UihOiDK3NXFaHMt5ave8HBgNWH/9BFwpymUzQIDAQAB",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
