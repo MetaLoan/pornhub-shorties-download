@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pornhub Shorties Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="extension-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <svg class="header-logo-icon" viewBox="0 0 24 24">
+          <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+        </svg>
+        <span class="logo-text">Shorties <span class="logo-highlight">Downloader</span></span>
+      </div>
+      <div class="version-tag">v1.0</div>
+    </header>
+
+    <!-- Active Tab Status Panel -->
+    <section id="active-tab-panel" class="status-panel hidden">
+      <div class="status-badge">
+        <span class="pulse-dot"></span>
+        当前页面已识别
+      </div>
+      <h3 class="video-title" id="active-video-title">正在读取视频信息...</h3>
+      
+      <div class="action-card">
+        <div class="command-preview-box">
+          <span class="label">yt-dlp 命令</span>
+          <div class="code-container" id="active-command-code">yt-dlp "..."</div>
+        </div>
+        
+        <!-- Direct Download Button -->
+        <button class="btn btn-primary" id="btn-active-download" style="background: linear-gradient(135deg, #FF9900 0%, #FF5500 100%); color: white; margin-bottom: 6px;">
+          <svg class="btn-icon" viewBox="0 0 24 24">
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+          </svg>
+          一键本地下载 (yt-dlp)
+        </button>
+
+        <button class="btn btn-secondary" id="btn-active-copy-cmd">
+          <svg class="btn-icon" viewBox="0 0 24 24">
+            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+          </svg>
+          复制下载命令
+        </button>
+        
+        <div class="btn-group">
+          <button class="btn btn-secondary" id="btn-active-copy-url">复制 Embed 链接</button>
+          <button class="btn btn-secondary" id="btn-active-open">新窗口播放</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Manual Input Converter Panel -->
+    <section id="manual-converter-panel" class="converter-panel">
+      <div class="input-group">
+        <label for="url-input" class="input-label">手动转换 Shorties 链接</label>
+        <div class="input-wrapper">
+          <input type="text" id="url-input" placeholder="输入 pornhub.com/shorties/[ID]" autocomplete="off">
+          <button class="btn btn-orange-action" id="btn-convert">转换</button>
+        </div>
+      </div>
+
+      <!-- Result Card (shown after conversion) -->
+      <div id="conversion-result" class="result-card hidden">
+        <div class="command-preview-box">
+          <span class="label">转换成功！yt-dlp 下载命令</span>
+          <div class="code-container" id="converted-command-code">yt-dlp "..."</div>
+        </div>
+        
+        <!-- Direct Download Button -->
+        <button class="btn btn-primary" id="btn-converted-download" style="background: linear-gradient(135deg, #FF9900 0%, #FF5500 100%); color: white; margin-bottom: 6px;">
+          <svg class="btn-icon" viewBox="0 0 24 24">
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+          </svg>
+          一键本地下载 (yt-dlp)
+        </button>
+
+        <button class="btn btn-secondary" id="btn-converted-copy-cmd">
+          <svg class="btn-icon" viewBox="0 0 24 24">
+            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+          </svg>
+          复制下载命令
+        </button>
+
+        <div class="btn-group">
+          <button class="btn btn-secondary" id="btn-converted-copy-url">复制 Embed 链接</button>
+          <button class="btn btn-secondary" id="btn-converted-open">打开视频</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings Panel -->
+    <section id="settings-panel" class="converter-panel">
+      <h3 class="input-label" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;" id="btn-toggle-settings">
+        <span>网络代理与高级设置</span>
+        <svg id="settings-arrow-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="transition: transform 0.2s; transform: rotate(0deg);">
+          <path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </h3>
+      <div id="settings-content" class="action-card hidden">
+        <div class="input-group">
+          <label for="proxy-input" class="input-label" style="font-size: 11px;">网络代理 (例如 http://127.0.0.1:7890)</label>
+          <input type="text" id="proxy-input" placeholder="国内用户下载建议配置代理，留空不使用" autocomplete="off" style="background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 12px; color: var(--text-primary); font-size: 12px; outline: none; width: 100%;">
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+          <input type="checkbox" id="bypass-ssl-checkbox" checked style="accent-color: var(--accent-orange); width: 15px; height: 15px; cursor: pointer;">
+          <label for="bypass-ssl-checkbox" class="input-label" style="cursor: pointer; user-select: none; font-size: 12px; color: var(--text-secondary);">忽略 SSL 证书验证 (可修复证书握手错误)</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer Guide -->
+    <footer class="app-footer">
+      使用说明：配合命令行下载器 <code class="code-inline">yt-dlp</code> 使用效果最佳。
+    </footer>
+
+    <!-- Toast Notification -->
+    <div id="popup-toast" class="toast hidden">已复制到剪贴板！</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

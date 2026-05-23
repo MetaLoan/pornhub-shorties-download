@@ -1,0 +1,188 @@
+/* content.css - Styles for the injected Shorties Downloader panel */
+
+/* Floating Action Button (FAB) */
+#ph-shorties-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #FF9900 0%, #FF6600 100%);
+  box-shadow: 0 4px 20px rgba(255, 153, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 9999999;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+#ph-shorties-fab:hover {
+  transform: scale(1.1) rotate(5deg);
+  box-shadow: 0 6px 24px rgba(255, 153, 0, 0.6);
+}
+
+#ph-shorties-fab svg {
+  width: 24px;
+  height: 24px;
+  fill: #FFFFFF;
+  transition: transform 0.3s ease;
+}
+
+#ph-shorties-fab.active svg {
+  transform: rotate(135deg);
+}
+
+/* Control Panel Card */
+#ph-shorties-panel {
+  position: fixed;
+  bottom: 96px;
+  right: 24px;
+  width: 320px;
+  background: rgba(20, 20, 22, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  color: #FFFFFF;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  z-index: 9999998;
+  opacity: 0;
+  transform: translateY(20px) scale(0.95);
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+  overflow: hidden;
+}
+
+#ph-shorties-panel.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+/* Panel Content */
+.ph-shorties-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ph-shorties-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  background: linear-gradient(90deg, #FF9900, #FFCC00);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ph-shorties-body {
+  padding: 20px;
+}
+
+.ph-shorties-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.4);
+  margin-bottom: 8px;
+}
+
+/* Codeblock / Command Input container */
+.ph-shorties-code-box {
+  position: relative;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  font-size: 12px;
+  color: #FFA500;
+  word-break: break-all;
+  user-select: all;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+/* Action Buttons */
+.ph-shorties-btn {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  margin-bottom: 10px;
+}
+
+.ph-shorties-btn-primary {
+  background: #FF9900;
+  color: #000000;
+}
+
+.ph-shorties-btn-primary:hover {
+  background: #FFB333;
+  transform: translateY(-1px);
+}
+
+.ph-shorties-btn-primary:active {
+  transform: translateY(0);
+}
+
+.ph-shorties-btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ph-shorties-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.ph-shorties-btn-secondary:active {
+  transform: translateY(0);
+}
+
+/* Toast Notification */
+#ph-shorties-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%) translateY(40px);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 153, 0, 0.2);
+  color: #FF9900;
+  padding: 10px 24px;
+  border-radius: 30px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 10000000;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+#ph-shorties-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
