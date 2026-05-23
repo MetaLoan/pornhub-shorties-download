@@ -10,6 +10,7 @@ const HOST_NAME = 'com.shorties.downloader';
 const MAX_CONCURRENT = 3;
 const MAX_RETRIES = 2;
 const EARLY_DISCONNECT_MS = 1500;
+const NO_PROGRESS_TIMEOUT_MS = 60_000; // mark task as error if no host message for this long
 const STORAGE_KEY = 'tasks';
 
 // url -> task, the single source of truth in-memory.
@@ -158,7 +159,7 @@ function finalizeTask(task, finalState, finalMessage) {
 
 function startDownloadPort(task) {
   let port;
-  const state = { gotAnyMessage: false, finished: false };
+  const state = { gotAnyMessage: false, finished: false, lastSeen: Date.now() };
   const startedAt = Date.now();
   const attemptNum = task.attempt;
 
@@ -174,8 +175,27 @@ function startDownloadPort(task) {
   taskPorts.set(task.url, port);
   startKeepAlive();
 
+  // Watchdog: if no host message arrives for NO_PROGRESS_TIMEOUT_MS, force-fail
+  // so a hung task can never block the UI forever.
+  const watchdog = setInterval(() => {
+    if (state.finished) {
+      clearInterval(watchdog);
+      return;
+    }
+    if (Date.now() - state.lastSeen > NO_PROGRESS_TIMEOUT_MS) {
+      clearInterval(watchdog);
+      console.warn(`[bg] watchdog firing for url=${task.url} (no host msg for ${NO_PROGRESS_TIMEOUT_MS}ms)`);
+      state.finished = true;
+      try { port.disconnect(); } catch (_) {}
+      taskPorts.delete(task.url);
+      stopKeepAliveIfIdle();
+      finalizeTask(task, 'error', `宿主无响应超时（${Math.round(NO_PROGRESS_TIMEOUT_MS / 1000)}s 内无任何消息）`);
+    }
+  }, 5_000);
+
   port.onMessage.addListener((msg) => {
     state.gotAnyMessage = true;
+    state.lastSeen = Date.now();
     console.log('[bg] native -> ext:', msg);
     if (!msg) return;
     if (msg.status === 'progress') {
@@ -185,9 +205,11 @@ function startDownloadPort(task) {
       broadcastQueue();
     } else if (msg.status === 'success') {
       state.finished = true;
+      clearInterval(watchdog);
       finalizeTask(task, 'success', msg.message || '下载成功');
     } else if (msg.status === 'error') {
       state.finished = true;
+      clearInterval(watchdog);
       finalizeTask(task, 'error', msg.message || '下载失败');
     }
   });
@@ -196,6 +218,7 @@ function startDownloadPort(task) {
     const lastErr = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
     const elapsed = Date.now() - startedAt;
     console.warn(`[bg] port disconnected after ${elapsed}ms lastError="${lastErr}" gotAny=${state.gotAnyMessage} finished=${state.finished} url=${task.url}`);
+    clearInterval(watchdog);
     taskPorts.delete(task.url);
     stopKeepAliveIfIdle();
 
@@ -208,6 +231,15 @@ function startDownloadPort(task) {
       broadcastQueue();
       const delay = 300 * (attemptNum + 1);
       setTimeout(() => startDownloadPort(task), delay);
+      return;
+    }
+
+    // Disconnect AFTER some host activity but without a success/error message
+    // (e.g. host crashed mid-download, or yt-dlp exited cleanly via cache-hit
+    // path without emitting a final message). Treat as success-by-disconnect
+    // when we never saw an error, otherwise error.
+    if (state.gotAnyMessage) {
+      finalizeTask(task, 'success', '下载完成（宿主已退出）');
       return;
     }
 
