@@ -94,15 +94,18 @@ def install_root() -> Path:
     return base / "ShortiesDownloader"
 
 
-def default_host_binary() -> Path:
-    """Guess where `dist/` produced the host binary."""
+def default_bundle_dir() -> Path:
+    """Guess where build_host.py left the onedir bundle."""
     sysname, arch = _plat_tags()
-    suffix = ".exe" if IS_WINDOWS else ""
-    tagged = ROOT / "dist" / f"shorties_host-{sysname}-{arch}{suffix}"
-    plain = ROOT / "dist" / f"shorties_host{suffix}"
-    if tagged.exists():
+    tagged = ROOT / "dist" / f"shorties_host-{sysname}-{arch}"
+    plain = ROOT / "dist" / "shorties_host"
+    if tagged.is_dir():
         return tagged
     return plain
+
+
+def bundle_entry_exe(bundle_dir: Path) -> Path:
+    return bundle_dir / ("shorties_host.exe" if IS_WINDOWS else "shorties_host")
 
 
 def _plat_tags():
@@ -200,21 +203,45 @@ def uninstall_windows() -> list:
 
 # ---------------- Top-level ---------------- #
 
-def install(host_binary_arg):
-    src_bin = Path(host_binary_arg).expanduser().resolve() if host_binary_arg else default_host_binary()
-    if not src_bin.exists():
-        print(f"ERROR: host binary not found: {src_bin}", file=sys.stderr)
-        print("Run `python3 build_host.py` first to produce dist/shorties_host[.exe].", file=sys.stderr)
+def install(bundle_arg):
+    """Install the host bundle.
+
+    `bundle_arg` may be either the bundle directory itself or the entry
+    executable inside it; both are accepted for convenience. If omitted,
+    we look for the platform-tagged bundle that build_host.py emits.
+    """
+    if bundle_arg:
+        candidate = Path(bundle_arg).expanduser().resolve()
+        if candidate.is_dir():
+            src_bundle = candidate
+        elif candidate.is_file():
+            src_bundle = candidate.parent
+        else:
+            print(f"ERROR: not found: {candidate}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        src_bundle = default_bundle_dir()
+
+    if not src_bundle.is_dir() or not bundle_entry_exe(src_bundle).exists():
+        print(f"ERROR: host bundle not found: {src_bundle}", file=sys.stderr)
+        print("Run `python3 build_host.py` first to produce dist/shorties_host-<plat>-<arch>/.",
+              file=sys.stderr)
         sys.exit(1)
 
     root = install_root()
     root.mkdir(parents=True, exist_ok=True)
 
-    dst_bin = root / ("shorties_host.exe" if IS_WINDOWS else "shorties_host")
-    shutil.copy2(src_bin, dst_bin)
+    # Replace the bundle dir wholesale so stale files don't linger.
+    bundle_dir_name = "host"
+    dst_bundle = root / bundle_dir_name
+    if dst_bundle.exists():
+        shutil.rmtree(dst_bundle)
+    shutil.copytree(src_bundle, dst_bundle, symlinks=True)
+    dst_bin = bundle_entry_exe(dst_bundle)
     if not IS_WINDOWS:
         os.chmod(dst_bin, 0o755)
-    print(f"installed binary -> {dst_bin}")
+    print(f"installed bundle -> {dst_bundle}")
+    print(f"  entry exe     -> {dst_bin}")
 
     manifest_json = write_manifest_file(root, build_manifest(dst_bin))
     print(f"installed manifest -> {manifest_json}")
@@ -246,7 +273,9 @@ def uninstall():
     if root.exists():
         try:
             for p in root.iterdir():
-                if p.is_file():
+                if p.is_dir():
+                    shutil.rmtree(p)
+                else:
                     p.unlink()
             root.rmdir()
             print(f"removed install dir: {root}")
@@ -258,15 +287,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--uninstall", action="store_true",
                     help="Remove the host registration instead of installing.")
-    ap.add_argument("--host-binary", default=None,
-                    help="Path to the prebuilt host binary "
-                         "(default: ./dist/shorties_host[-<plat>-<arch>][.exe]).")
+    ap.add_argument("--bundle", default=None,
+                    help="Path to the prebuilt host bundle directory (or the "
+                         "entry exe inside it). Default: ./dist/shorties_host-<plat>-<arch>/.")
     args = ap.parse_args()
 
     if args.uninstall:
         uninstall()
     else:
-        install(args.host_binary)
+        install(args.bundle)
 
 
 if __name__ == "__main__":

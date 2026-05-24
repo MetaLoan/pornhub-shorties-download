@@ -30,19 +30,25 @@ matches on every machine, no matter how the extension was loaded.
 
 ## For end users — Install
 
-1. Download the right `shorties_host-<platform>-<arch>[.exe]` from Releases.
-2. Run `python3 install_host.py --host-binary path/to/shorties_host…`
-   (or double-click the bundled installer when distributed).
+1. Download the right `shorties_host-<platform>-<arch>.{tar.gz,zip}` from Releases
+   and unpack it (you should see a `shorties_host-<platform>-<arch>/` directory
+   containing `shorties_host[.exe]` and an `_internal/` folder).
+2. Run `python3 install_host.py --bundle path/to/shorties_host-<platform>-<arch>/`
+   (or just `python3 install_host.py` if the bundle is in `./dist/`).
    This:
-   - copies the host to `~/Library/Application Support/ShortiesDownloader/` (mac),
-     `~/.local/share/ShortiesDownloader/` (Linux), or
-     `%LOCALAPPDATA%\ShortiesDownloader\` (Windows);
+   - copies the entire bundle to `~/Library/Application Support/ShortiesDownloader/host/`
+     (mac), `~/.local/share/ShortiesDownloader/host/` (Linux), or
+     `%LOCALAPPDATA%\ShortiesDownloader\host\` (Windows);
    - registers it with Chrome / Edge / Brave / Vivaldi / Opera / Chromium.
 3. Install the extension in your browser (load unpacked, or from the
    web store once published). Because the `key` is fixed, the ID will
    always be `djnbhglpkggbgibmdnngpklojeepikil`.
 
 To uninstall: `python3 install_host.py --uninstall`.
+
+> **macOS note**: the bundle is ad-hoc signed by `build_host.py`. If you
+> see "Python3.framework is damaged" after a manual copy, run
+> `xattr -cr <bundle_dir>` to strip the quarantine attribute.
 
 ---
 
@@ -52,9 +58,11 @@ To uninstall: `python3 install_host.py --uninstall`.
 # 1. One-time: install PyInstaller
 python3 -m pip install pyinstaller
 
-# 2. Build (also downloads yt-dlp + ffmpeg for the current platform)
+# 2. Build (downloads yt-dlp + ffmpeg, runs PyInstaller, ad-hoc-signs
+#    the macOS bundle, rolls a .tar.gz / .zip in dist/)
 python3 build_host.py
-# → produces ./dist/shorties_host-<platform>-<arch>[.exe]
+# → produces ./dist/shorties_host-<platform>-<arch>/
+#          + ./dist/shorties_host-<platform>-<arch>.{tar.gz,zip}
 
 # 3. Install it for the local browsers
 python3 install_host.py
@@ -62,6 +70,12 @@ python3 install_host.py
 # 4. Load ./ as an unpacked extension in edge://extensions or
 #    chrome://extensions, refresh a Shorties page, and try downloading.
 ```
+
+> **Why onedir, not onefile?** PyInstaller's single-file mode buries
+> `Python3.framework` in a runtime-extracted blob that can't be
+> codesigned ahead of time. macOS Gatekeeper then rejects it as
+> "damaged" when Edge launches the host. The onedir layout puts the
+> framework on disk as a real file so we can sign it.
 
 `build_host.py` must be run **separately on each target OS** — PyInstaller
 doesn't cross-compile. Use GitHub Actions or a VM matrix for releases.
@@ -99,13 +113,17 @@ developer convenience when running un-frozen.
 
 ### Signing key
 
-`extension.key.pem` was generated with `openssl genrsa -out extension.key.pem 2048`
-and the corresponding public key (base64-encoded SPKI DER) lives in
-`manifest.json`'s `key` field. Treat the `.pem` file as a secret — anyone
-who has it can publish an update signed as this extension.
+The extension's RSA-2048 key lives **outside the source tree** at
+`~/.config/shorties-downloader/extension.key.pem` (so the browser doesn't
+warn about a private key being inside the extension directory when
+loading unpacked). The corresponding public key (base64-encoded SPKI
+DER) is baked into `manifest.json`'s `key` field, fixing the extension
+ID at `djnbhglpkggbgibmdnngpklojeepikil`. Treat the `.pem` as a secret —
+anyone with it can publish an update signed as this extension.
 
-When you eventually publish to Chrome Web Store / Edge Add-ons, repackage
-with the same key (`chrome.exe --pack-extension=./ --pack-extension-key=extension.key.pem`)
+When you eventually publish to Chrome Web Store / Edge Add-ons,
+repackage with the same key
+(`chrome.exe --pack-extension=./ --pack-extension-key=~/.config/shorties-downloader/extension.key.pem`)
 so the published extension keeps the same ID.
 
 ---

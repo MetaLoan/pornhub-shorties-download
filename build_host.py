@@ -187,7 +187,89 @@ def ensure_ffmpeg(platform_key, vendor_dir: Path):
 
 # ----------- Build ----------- #
 
-def run_pyinstaller(platform_key, output_name: str):
+def _is_mach_o(path: Path) -> bool:
+    """Return True iff `path` looks like a Mach-O file we should sign."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4)
+    except (OSError, PermissionError):
+        return False
+    # Mach-O magic numbers (LE/BE, 32/64-bit) + universal "fat" archive
+    return head in (
+        b"\xcf\xfa\xed\xfe",  # MH_MAGIC_64 (LE)
+        b"\xce\xfa\xed\xfe",  # MH_MAGIC (LE)
+        b"\xfe\xed\xfa\xcf",  # MH_MAGIC_64 (BE)
+        b"\xfe\xed\xfa\xce",  # MH_MAGIC (BE)
+        b"\xca\xfe\xba\xbe",  # FAT_MAGIC
+        b"\xbe\xba\xfe\xca",  # FAT_CIGAM
+    )
+
+
+def _codesign(path: Path):
+    subprocess.check_call(
+        ["codesign", "--force", "--sign", "-", "--timestamp=none", str(path)],
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _codesign_macos_bundle(bundle_dir: Path):
+    """Ad-hoc sign every Mach-O inside the onedir bundle (bottom-up).
+
+    Order matters: child binaries first, then frameworks/dylibs, then the
+    entry exe. codesign refuses to operate on a plain directory, so we
+    can't `--deep` the whole bundle in one shot.
+    """
+    log(f"ad-hoc signing macOS bundle: {bundle_dir}")
+    entry_exe = bundle_dir / "shorties_host"
+
+    # 1. Sign all plain Mach-O files first (deepest paths first).
+    mach_o_files = []
+    for root, _, files in os.walk(bundle_dir):
+        for fname in files:
+            p = Path(root) / fname
+            if p == entry_exe:
+                continue
+            if _is_mach_o(p):
+                mach_o_files.append(p)
+    mach_o_files.sort(key=lambda p: (-len(str(p)), str(p)))  # deepest first
+    log(f"  signing {len(mach_o_files)} Mach-O leaves")
+    for p in mach_o_files:
+        try:
+            _codesign(p)
+        except subprocess.CalledProcessError as e:
+            log(f"  WARNING: codesign failed for {p}: {e}")
+
+    # 2. Frameworks are bundles — codesign accepts them directly.
+    for root, dirs, _ in os.walk(bundle_dir):
+        for d in dirs:
+            if d.endswith(".framework"):
+                fw = Path(root) / d
+                log(f"  signing framework {fw}")
+                try:
+                    subprocess.check_call(
+                        ["codesign", "--force", "--deep", "--sign", "-",
+                         "--timestamp=none", str(fw)]
+                    )
+                except subprocess.CalledProcessError as e:
+                    log(f"  WARNING: framework codesign failed for {fw}: {e}")
+
+    # 3. Finally the entry exe (so its hash sees the now-signed children).
+    log(f"  signing entry exe {entry_exe}")
+    try:
+        _codesign(entry_exe)
+    except subprocess.CalledProcessError as e:
+        log(f"  WARNING: entry codesign failed: {e}")
+        return
+
+    # 4. Verify.
+    try:
+        subprocess.check_call(["codesign", "--verify", "--verbose=2", str(entry_exe)])
+        log("  codesign verify: OK")
+    except subprocess.CalledProcessError as e:
+        log(f"  WARNING: codesign verify failed: {e}")
+
+
+def run_pyinstaller(platform_key, bundle_name: str):
     # Make sure PyInstaller is available
     try:
         import PyInstaller  # noqa: F401
@@ -196,35 +278,46 @@ def run_pyinstaller(platform_key, output_name: str):
         raise SystemExit(1)
 
     spec = ROOT / "shorties_host.spec"
+    # PyInstaller writes work files in build/<spec stem>, so wipe both
+    # build/ and dist/<bundle name>/ for a clean rerun.
+    if (DIST / "shorties_host").exists():
+        shutil.rmtree(DIST / "shorties_host")
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
            "--distpath", str(DIST), str(spec)]
     log("running: " + " ".join(cmd))
     subprocess.check_call(cmd, cwd=ROOT)
 
-    # Locate the produced binary and rename it to a platform-tagged name
-    produced = DIST / ("shorties_host.exe" if platform_key[0] == "windows" else "shorties_host")
-    if not produced.exists():
-        raise SystemExit(f"PyInstaller didn't produce {produced}")
-    final = DIST / output_name
-    if produced != final:
-        if final.exists():
-            final.unlink()
-        produced.rename(final)
+    produced_dir = DIST / "shorties_host"
+    if not produced_dir.is_dir():
+        raise SystemExit(f"PyInstaller didn't produce {produced_dir}")
 
-    # macOS Gatekeeper would refuse to launch the unsigned bundle (it'd
-    # report Python3.framework as "damaged"). An ad-hoc signature is enough
-    # for user-installed native messaging hosts; for a real release you'd
-    # swap "-" for your Developer ID and notarize afterwards.
+    # Rename the dir to be platform/arch-tagged so a single dist/ can hold
+    # artifacts from multiple platforms during release prep.
+    final_dir = DIST / bundle_name
+    if final_dir.is_dir():
+        shutil.rmtree(final_dir)
+    elif final_dir.exists():
+        final_dir.unlink()  # leftover onefile binary from older builds
+    produced_dir.rename(final_dir)
+
+    # macOS Gatekeeper rejects unsigned Mach-O files inside the bundle
+    # (it'd report "Python3.framework damaged"). codesign can't recurse
+    # into a plain directory, so we sign every Mach-O leaf bottom-up,
+    # then the framework, then the entry exe. Ad-hoc identity (`-`) is
+    # enough for user-installed hosts; for a public release, swap for a
+    # Developer ID and notarize.
     if platform_key[0] == "macos":
-        log("ad-hoc signing macOS bundle (codesign --force --deep --sign -)")
-        try:
-            subprocess.check_call(["codesign", "--force", "--deep", "--sign", "-", str(final)])
-        except FileNotFoundError:
-            log("WARNING: codesign not found; bundle will likely be blocked by Gatekeeper")
-        except subprocess.CalledProcessError as e:
-            log(f"WARNING: codesign failed ({e}); Gatekeeper may block the bundle")
+        _codesign_macos_bundle(final_dir)
 
-    log(f"OK — {final}")
+    # Roll a single archive for distribution.
+    if platform_key[0] == "windows":
+        archive_path = shutil.make_archive(str(final_dir), "zip", root_dir=str(DIST), base_dir=bundle_name)
+    else:
+        archive_path = shutil.make_archive(str(final_dir), "gztar", root_dir=str(DIST), base_dir=bundle_name)
+    log(f"archive: {archive_path}")
+
+    log(f"OK — bundle dir: {final_dir}")
+    log(f"     entry exe:  {final_dir / ('shorties_host.exe' if platform_key[0] == 'windows' else 'shorties_host')}")
 
 
 def main():
@@ -248,10 +341,9 @@ def main():
     if args.vendor_only:
         return
 
-    suffix = ".exe" if plat[0] == "windows" else ""
-    out_name = f"shorties_host-{plat[0]}-{plat[1]}{suffix}"
+    bundle_name = f"shorties_host-{plat[0]}-{plat[1]}"
     DIST.mkdir(parents=True, exist_ok=True)
-    run_pyinstaller(plat, out_name)
+    run_pyinstaller(plat, bundle_name)
 
 
 if __name__ == "__main__":

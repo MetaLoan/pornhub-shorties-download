@@ -2,23 +2,23 @@
 """
 PyInstaller spec for the Shorties Downloader native host.
 
+Uses --onedir layout (EXE + COLLECT) instead of --onefile because the
+single-file mode embeds Python3.framework as a runtime-extracted blob
+that ends up with NO codesign signature — and macOS Gatekeeper then
+rejects it as "damaged". In onedir mode the framework is a real on-disk
+sibling that can be ad-hoc-signed alongside the main executable.
+
 Run via the build_host.py wrapper:
     python3 build_host.py
-
-The spec resolves yt-dlp / ffmpeg binaries from ./vendor/<platform>/
-(prepared by build_host.py) and bundles them next to native_host.py
-into a single executable named `shorties_host[.exe]`.
 """
 
 import os
-import sys
 import platform
 
 block_cipher = None
 
 SYSTEM = platform.system()
 IS_WINDOWS = SYSTEM == "Windows"
-IS_MACOS = SYSTEM == "Darwin"
 
 PLATFORM_DIR = {
     "Windows": "windows",
@@ -39,7 +39,6 @@ for src in (yt_dlp_src, ffmpeg_src):
             f"Missing vendor binary: {src}\n"
             "Run build_host.py — it downloads them before invoking PyInstaller."
         )
-    # ('.', dest='.') puts the file at the root of _MEIPASS.
     binaries.append((src, "."))
 
 a = Analysis(
@@ -59,22 +58,32 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# onedir mode: EXE() with exclude_binaries=True + COLLECT() to assemble
+# the directory layout that ships to users.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="shorties_host",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    runtime_tmpdir=None,
-    console=True,           # native-messaging hosts MUST keep stdio attached
+    console=True,           # native messaging hosts MUST keep stdio attached
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="shorties_host",
 )

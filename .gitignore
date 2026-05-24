@@ -3,6 +3,8 @@
 shortiesdownloader.zip
 
 # Extension signing key — NEVER commit private key.
+# Canonical location is ~/.config/shorties-downloader/extension.key.pem;
+# these entries are a safety net in case anyone regenerates here by mistake.
 extension.key.pem
 extension.pub.der
 extension.id.txt
