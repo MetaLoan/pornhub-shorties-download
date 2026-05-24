@@ -205,11 +205,16 @@ def _is_mach_o(path: Path) -> bool:
     )
 
 
-def _codesign(path: Path):
-    subprocess.check_call(
-        ["codesign", "--force", "--sign", "-", "--timestamp=none", str(path)],
-        stderr=subprocess.STDOUT,
-    )
+ENTITLEMENTS_PLIST = ROOT / "macos_entitlements.plist"
+
+
+def _codesign(path: Path, with_entitlements: bool = False):
+    cmd = ["codesign", "--force", "--sign", "-", "--timestamp=none",
+           "--options", "runtime"]
+    if with_entitlements and ENTITLEMENTS_PLIST.exists():
+        cmd.extend(["--entitlements", str(ENTITLEMENTS_PLIST)])
+    cmd.append(str(path))
+    subprocess.check_call(cmd, stderr=subprocess.STDOUT)
 
 
 def _codesign_macos_bundle(bundle_dir: Path):
@@ -222,7 +227,9 @@ def _codesign_macos_bundle(bundle_dir: Path):
     log(f"ad-hoc signing macOS bundle: {bundle_dir}")
     entry_exe = bundle_dir / "shorties_host"
 
-    # 1. Sign all plain Mach-O files first (deepest paths first).
+    # 1. Sign all plain Mach-O files first (deepest paths first). These
+    #    don't need entitlements — only the entry exe whose Hardened Runtime
+    #    is what Gatekeeper actually evaluates needs them.
     mach_o_files = []
     for root, _, files in os.walk(bundle_dir):
         for fname in files:
@@ -239,7 +246,9 @@ def _codesign_macos_bundle(bundle_dir: Path):
         except subprocess.CalledProcessError as e:
             log(f"  WARNING: codesign failed for {p}: {e}")
 
-    # 2. Frameworks are bundles — codesign accepts them directly.
+    # 2. Frameworks are bundles — codesign accepts them directly. Use --deep
+    #    so any internal binaries (e.g. inside Python3.framework/Versions)
+    #    are signed too.
     for root, dirs, _ in os.walk(bundle_dir):
         for d in dirs:
             if d.endswith(".framework"):
@@ -248,15 +257,17 @@ def _codesign_macos_bundle(bundle_dir: Path):
                 try:
                     subprocess.check_call(
                         ["codesign", "--force", "--deep", "--sign", "-",
-                         "--timestamp=none", str(fw)]
+                         "--timestamp=none", "--options", "runtime", str(fw)]
                     )
                 except subprocess.CalledProcessError as e:
                     log(f"  WARNING: framework codesign failed for {fw}: {e}")
 
-    # 3. Finally the entry exe (so its hash sees the now-signed children).
-    log(f"  signing entry exe {entry_exe}")
+    # 3. Entry exe LAST, WITH Hardened Runtime entitlements that permit
+    #    loading our ad-hoc-signed Python3.framework. Without these,
+    #    library-validation would still reject the framework at launch.
+    log(f"  signing entry exe {entry_exe} (hardened + entitlements)")
     try:
-        _codesign(entry_exe)
+        _codesign(entry_exe, with_entitlements=True)
     except subprocess.CalledProcessError as e:
         log(f"  WARNING: entry codesign failed: {e}")
         return
