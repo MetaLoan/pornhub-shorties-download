@@ -127,12 +127,68 @@ def downloads_dir():
     return os.path.expanduser("~/Downloads")
 
 
+def detect_system_proxy():
+    """Best-effort: return an http(s) proxy URL the user's OS is configured
+    to use, or '' if none. This is what CLI yt-dlp gets for free; the
+    library API doesn't pick it up automatically."""
+    # 1. Standard env vars (set by some users / shells)
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        v = os.environ.get(k)
+        if v:
+            return v
+    # 2. Per-OS system settings
+    try:
+        if IS_MACOS:
+            import subprocess
+            r = subprocess.run(["scutil", "--proxy"], capture_output=True, text=True, timeout=2)
+            host = port = None
+            enabled = False
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("HTTPEnable"):
+                    enabled = line.endswith(": 1")
+                elif line.startswith("HTTPProxy"):
+                    host = line.split(":", 1)[1].strip()
+                elif line.startswith("HTTPPort"):
+                    port = line.split(":", 1)[1].strip()
+            if enabled and host and port:
+                return f"http://{host}:{port}"
+        elif IS_WINDOWS:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as k:
+                enabled, _ = winreg.QueryValueEx(k, "ProxyEnable")
+                if enabled:
+                    server, _ = winreg.QueryValueEx(k, "ProxyServer")
+                    # ProxyServer may be host:port or "http=...;https=..."
+                    if "=" in server:
+                        for entry in server.split(";"):
+                            if entry.lower().startswith("http="):
+                                return "http://" + entry.split("=", 1)[1]
+                    elif server:
+                        return "http://" + server
+        else:
+            # Linux/other: rely on env vars only.
+            pass
+    except Exception as e:
+        logging.warning("system proxy detection failed: %s", e)
+    return ""
+
+
 def run_download(url, proxy, bypass_ssl, ffmpeg_path):
     """Drive yt_dlp in-process and stream progress to the extension."""
     # Import lazily so a malformed install only kills the one request,
     # not the host's loop.
     from yt_dlp import YoutubeDL
     from yt_dlp.utils import DownloadError
+
+    # If the caller didn't set an explicit proxy, fall back to whatever
+    # the OS has configured — otherwise yt-dlp would go direct and fail
+    # for users in geo-restricted regions.
+    if not proxy:
+        proxy = detect_system_proxy()
+        if proxy:
+            logging.info("auto-using system proxy: %s", proxy)
 
     target_dir = downloads_dir()
     os.makedirs(target_dir, exist_ok=True)
