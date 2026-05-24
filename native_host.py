@@ -19,6 +19,23 @@ import os
 import platform
 import logging
 
+# Monkeypatch platform.mac_ver to prevent yt-dlp crash in frozen binaries on macOS
+if platform.system() == "Darwin":
+    _orig_mac_ver = platform.mac_ver
+    def _patched_mac_ver(*args, **kwargs):
+        res = _orig_mac_ver(*args, **kwargs)
+        if not res[0]:
+            try:
+                import subprocess
+                val = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
+                if val:
+                    return (val, ('', '', ''), platform.machine())
+            except Exception:
+                pass
+            return ("14.5.0", ('', '', ''), platform.machine())
+        return res
+    platform.mac_ver = _patched_mac_ver
+
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 IS_FROZEN = bool(getattr(sys, "frozen", False))
