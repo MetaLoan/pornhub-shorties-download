@@ -219,7 +219,11 @@ def run_download(url, proxy, bypass_ssl, ffmpeg_path):
         "nocheckcertificate": bool(bypass_ssl),
         "noprogress": True,                # we use progress_hooks instead
         "progress_hooks": [progress_hook],
-        "remuxvideo": "mp4",
+        # NOTE: do NOT set "remuxvideo": "mp4". It forces yt-dlp to skip
+        # formats that are already mp4 and prefer ones that need remuxing
+        # (typically HLS m3u8), which on Pornhub Shorties yields 404'd
+        # fragments. Letting the default format selector pick best mp4
+        # natively matches CLI behavior `yt-dlp <url>` (no flags).
         "quiet": True,
         "no_warnings": True,
         "logger": _make_logger(),
