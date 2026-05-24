@@ -219,11 +219,18 @@ def run_download(url, proxy, bypass_ssl, ffmpeg_path):
         "nocheckcertificate": bool(bypass_ssl),
         "noprogress": True,                # we use progress_hooks instead
         "progress_hooks": [progress_hook],
-        # NOTE: do NOT set "remuxvideo": "mp4". It forces yt-dlp to skip
-        # formats that are already mp4 and prefer ones that need remuxing
-        # (typically HLS m3u8), which on Pornhub Shorties yields 404'd
-        # fragments. Letting the default format selector pick best mp4
-        # natively matches CLI behavior `yt-dlp <url>` (no flags).
+        # Match CLI default format selector. The library API's plain
+        # "best" picks different formats than the CLI's
+        # "bestvideo*+bestaudio/best" default, so align them.
+        "format": "bestvideo*+bestaudio/best",
+        # Match CLI retry behaviour. Pornhub HLS fragments transiently
+        # 404; the CLI retries up to 10× per fragment and 10× per
+        # request — the library API defaults to 0 retries and just
+        # "skips unavailable fragments", which makes every Shorties
+        # download fail with "The downloaded file is empty".
+        "retries": 10,
+        "fragment_retries": 10,
+        "skip_unavailable_fragments": False,
         "quiet": True,
         "no_warnings": True,
         "logger": _make_logger(),
