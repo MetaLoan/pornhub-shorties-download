@@ -51,25 +51,6 @@ def detect_platform():
     raise SystemExit(f"Unsupported platform: {sysname} / {machine}")
 
 
-# Each value is a list of mirrors. We try them in order.
-YT_DLP_URLS = {
-    ("windows", "x64"): [
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-    ],
-    ("macos", "arm64"): [
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos",
-    ],
-    ("macos", "x64"): [
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos_legacy",
-    ],
-    ("linux", "x64"): [
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
-    ],
-    ("linux", "arm64"): [
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64",
-    ],
-}
-
 # ffmpeg static-build mirrors. We download an archive and pull out a single
 # `ffmpeg(.exe)`.
 FFMPEG_ARCHIVES = {
@@ -148,24 +129,23 @@ def extract_member(archive_bytes: bytes, kind: str, member_glob: str, dest: Path
     make_executable(dest)
 
 
-def ensure_yt_dlp(platform_key, vendor_dir: Path):
-    exe = vendor_dir / ("yt-dlp.exe" if platform_key[0] == "windows" else "yt-dlp")
-    if exe.exists():
-        log(f"yt-dlp already present at {exe}")
+def ensure_yt_dlp_module():
+    """yt-dlp must be importable in the *build* Python so PyInstaller can
+    collect it. (At runtime, the bundled Python imports it from the
+    bundle, no subprocess.)"""
+    try:
+        import yt_dlp  # noqa: F401
+        log(f"yt_dlp module already installed (build-side)")
         return
-    urls = YT_DLP_URLS.get(platform_key)
-    if not urls:
-        raise SystemExit(f"No yt-dlp URL configured for {platform_key}")
-    last_err = None
-    for url in urls:
-        try:
-            download(url, exe)
-            make_executable(exe)
-            return
-        except Exception as e:
-            last_err = e
-            log(f"  failed: {e}")
-    raise SystemExit(f"All yt-dlp downloads failed for {platform_key}: {last_err}")
+    except ImportError:
+        pass
+    log("installing yt_dlp into the build Python ...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "--user", "yt-dlp"])
+    # Re-check
+    try:
+        import yt_dlp  # noqa: F401
+    except ImportError as e:
+        raise SystemExit(f"yt_dlp install succeeded but import still fails: {e}")
 
 
 def ensure_ffmpeg(platform_key, vendor_dir: Path):
@@ -346,8 +326,8 @@ def main():
     vendor_dir.mkdir(parents=True, exist_ok=True)
 
     if not args.skip_vendor:
-        ensure_yt_dlp(plat, vendor_dir)
         ensure_ffmpeg(plat, vendor_dir)
+        ensure_yt_dlp_module()
 
     if args.vendor_only:
         return

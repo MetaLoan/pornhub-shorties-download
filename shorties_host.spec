@@ -8,12 +8,22 @@ that ends up with NO codesign signature — and macOS Gatekeeper then
 rejects it as "damaged". In onedir mode the framework is a real on-disk
 sibling that can be ad-hoc-signed alongside the main executable.
 
+yt-dlp is consumed as an IMPORTED LIBRARY here (collect_all('yt_dlp')),
+not a sibling binary. The official yt-dlp_macos build is itself a
+PyInstaller --onefile that extracts its own unsigned Python.framework at
+runtime — when launched as a child of our Hardened-Runtime'd host the
+inner framework fails library validation and macOS pops up
+"Python.framework is damaged". Linking yt_dlp into our own Python avoids
+the second bootloader entirely.
+
 Run via the build_host.py wrapper:
     python3 build_host.py
 """
 
 import os
 import platform
+
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
@@ -29,24 +39,22 @@ PLATFORM_DIR = {
 VENDOR_DIR = os.path.abspath(os.path.join("vendor", PLATFORM_DIR))
 
 EXE_SUFFIX = ".exe" if IS_WINDOWS else ""
-yt_dlp_src = os.path.join(VENDOR_DIR, "yt-dlp" + EXE_SUFFIX)
 ffmpeg_src = os.path.join(VENDOR_DIR, "ffmpeg" + EXE_SUFFIX)
+if not os.path.exists(ffmpeg_src):
+    raise SystemExit(
+        f"Missing vendor binary: {ffmpeg_src}\n"
+        "Run build_host.py — it downloads it before invoking PyInstaller."
+    )
 
-binaries = []
-for src in (yt_dlp_src, ffmpeg_src):
-    if not os.path.exists(src):
-        raise SystemExit(
-            f"Missing vendor binary: {src}\n"
-            "Run build_host.py — it downloads them before invoking PyInstaller."
-        )
-    binaries.append((src, "."))
+# Pull in every submodule + data file yt-dlp needs (extractors, postprocessors).
+yt_datas, yt_binaries, yt_hidden = collect_all("yt_dlp")
 
 a = Analysis(
     ["native_host.py"],
     pathex=[],
-    binaries=binaries,
-    datas=[],
-    hiddenimports=[],
+    binaries=yt_binaries + [(ffmpeg_src, ".")],
+    datas=yt_datas,
+    hiddenimports=yt_hidden,
     hookspath=[],
     runtime_hooks=[],
     excludes=["tkinter", "test", "unittest"],

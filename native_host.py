@@ -3,18 +3,18 @@
 """
 native_host.py — Chromium Native Messaging host for Shorties Downloader.
 
-Designed to run in two modes:
-  1. Source mode: `python3 native_host.py`. Looks up yt-dlp/ffmpeg in PATH
-     and common per-OS install locations.
-  2. PyInstaller bundle: a single executable produced by build_host.py.
-     The bundled yt-dlp/ffmpeg sit next to (or inside) the executable;
-     we find them via sys._MEIPASS or the executable's directory.
+Uses yt-dlp as an in-process Python library (NOT a subprocess), so we
+don't end up with a second PyInstaller bootloader extracting its own
+unsigned Python.framework into /tmp — which is what made macOS Gatekeeper
+reject the download with "Python.framework is damaged".
+
+ffmpeg is still kept as a sibling binary (it's a plain Mach-O, not a
+PyInstaller bundle, so it doesn't have the embedded-framework problem).
 """
 
 import sys
 import json
 import struct
-import subprocess
 import os
 import platform
 import logging
@@ -65,10 +65,9 @@ def send_message(d):
     sys.stdout.buffer.flush()
 
 
-# ---------- Binary discovery ----------
+# ---------- Bundled ffmpeg discovery ----------
 
 def _bundled_dirs():
-    """Directories where bundled yt-dlp/ffmpeg may live (frozen mode first)."""
     dirs = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
@@ -78,21 +77,20 @@ def _bundled_dirs():
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         dirs.append(exe_dir)
         dirs.append(os.path.join(exe_dir, "bin"))
-    # Source mode dev fallback: a local vendor/ next to this script.
+        dirs.append(os.path.join(exe_dir, "_internal"))
     here = os.path.dirname(os.path.abspath(__file__))
     dirs.append(os.path.join(here, "vendor"))
     return dirs
 
 
-def _system_search_paths():
+def _system_search_paths_ffmpeg():
     if IS_WINDOWS:
-        candidates = []
+        out = []
         for v in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
             base = os.environ.get(v)
             if base:
-                candidates.append(os.path.join(base, "yt-dlp"))
-                candidates.append(os.path.join(base, "ffmpeg", "bin"))
-        return candidates
+                out.append(os.path.join(base, "ffmpeg", "bin"))
+        return out
     if IS_MACOS:
         return ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
                 os.path.expanduser("~/.local/bin")]
@@ -100,57 +98,113 @@ def _system_search_paths():
             "/snap/bin"]
 
 
-def _find_executable(name):
-    exe_name = name + EXE_SUFFIX
-    # 1. bundled
+def find_ffmpeg():
+    exe_name = "ffmpeg" + EXE_SUFFIX
     for d in _bundled_dirs():
         cand = os.path.join(d, exe_name)
         if os.path.isfile(cand) and (IS_WINDOWS or os.access(cand, os.X_OK)):
-            logging.info("found bundled %s at %s", name, cand)
+            logging.info("found bundled ffmpeg at %s", cand)
             return cand
-    # 2. PATH
     path_env = os.environ.get("PATH", "")
-    extra = _system_search_paths()
-    augmented_path = os.pathsep.join([p for p in extra if p] + [path_env])
-    os.environ["PATH"] = augmented_path
-    for d in augmented_path.split(os.pathsep):
+    augmented = os.pathsep.join(_system_search_paths_ffmpeg() + [path_env])
+    os.environ["PATH"] = augmented
+    for d in augmented.split(os.pathsep):
         if not d:
             continue
         cand = os.path.join(d, exe_name)
         if os.path.isfile(cand) and (IS_WINDOWS or os.access(cand, os.X_OK)):
-            logging.info("found %s on PATH at %s", name, cand)
+            logging.info("found ffmpeg on PATH at %s", cand)
             return cand
-    logging.warning("could not locate %s anywhere", name)
+    logging.warning("ffmpeg not found anywhere")
     return None
 
 
-def find_yt_dlp():
-    return _find_executable("yt-dlp") or ("yt-dlp" + EXE_SUFFIX)
-
-
-def find_ffmpeg():
-    return _find_executable("ffmpeg")
-
-
-# ---------- Main loop ----------
+# ---------- Download driver ----------
 
 def downloads_dir():
-    # Cross-platform Downloads folder
     if IS_WINDOWS:
-        # Most reliable: USERPROFILE\Downloads
         return os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Downloads")
     return os.path.expanduser("~/Downloads")
 
 
+def run_download(url, proxy, bypass_ssl, ffmpeg_path):
+    """Drive yt_dlp in-process and stream progress to the extension."""
+    # Import lazily so a malformed install only kills the one request,
+    # not the host's loop.
+    from yt_dlp import YoutubeDL
+    from yt_dlp.utils import DownloadError
+
+    target_dir = downloads_dir()
+    os.makedirs(target_dir, exist_ok=True)
+
+    last_pct = {"v": -1.0}
+
+    def progress_hook(d):
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            downloaded = d.get("downloaded_bytes") or 0
+            pct = (downloaded * 100.0 / total) if total else 0.0
+            # Throttle: send only on >=0.5% change to avoid IPC flood
+            if pct - last_pct["v"] >= 0.5 or pct >= 99.9:
+                last_pct["v"] = pct
+                try:
+                    send_message({"status": "progress", "percentage": f"{pct:.1f}"})
+                except Exception:
+                    pass
+        elif d.get("status") == "finished":
+            try:
+                send_message({"status": "progress", "percentage": "100.0"})
+            except Exception:
+                pass
+
+    ydl_opts = {
+        "paths": {"home": target_dir},
+        "newline": True,
+        "nocheckcertificate": bool(bypass_ssl),
+        "noprogress": True,                # we use progress_hooks instead
+        "progress_hooks": [progress_hook],
+        "remuxvideo": "mp4",
+        "quiet": True,
+        "no_warnings": True,
+        "logger": _make_logger(),
+    }
+    if proxy:
+        ydl_opts["proxy"] = proxy
+    if ffmpeg_path:
+        ydl_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_path)
+
+    logging.info("yt_dlp opts: %s", {k: v for k, v in ydl_opts.items() if k != "logger"})
+
+    with YoutubeDL(ydl_opts) as ydl:
+        try:
+            ret = ydl.download([url])
+        except DownloadError as e:
+            return ("error", f"yt-dlp 报错: {e}")
+        except Exception as e:
+            logging.exception("yt_dlp raised")
+            return ("error", f"yt-dlp 异常: {e}")
+
+    if ret == 0:
+        return ("success", "视频已下载并保存到 Downloads 文件夹。")
+    return ("error", f"yt-dlp 退出码: {ret}")
+
+
+def _make_logger():
+    """Forward yt_dlp's internal log lines into our debug log."""
+    class _L:
+        def debug(self, msg): logging.debug("yt_dlp: %s", msg)
+        def info(self, msg):  logging.info("yt_dlp: %s", msg)
+        def warning(self, msg): logging.warning("yt_dlp: %s", msg)
+        def error(self, msg): logging.error("yt_dlp: %s", msg)
+    return _L()
+
+
+# ---------- Main loop ----------
+
 def main():
     logging.info("main() started")
-    yt_dlp_path = find_yt_dlp()
-    logging.info("Resolved yt-dlp: %s", yt_dlp_path)
     ffmpeg_path = find_ffmpeg()
     logging.info("Resolved ffmpeg: %s", ffmpeg_path)
-
-    import re
-    progress_re = re.compile(r"\[download\]\s+([0-9.]+)%")
 
     while True:
         try:
@@ -160,74 +214,22 @@ def main():
             action = msg.get("action")
 
             if action != "download":
-                logging.warning("Unknown action: %s", action)
                 send_message({"status": "error", "message": f"Unknown action: {action}"})
                 continue
 
             url = msg.get("url")
-            proxy = msg.get("proxy")
-            bypass_ssl = msg.get("bypassSsl", True)
-
             if not url:
                 send_message({"status": "error", "message": "Missing URL parameter"})
                 continue
 
-            target_dir = downloads_dir()
-            os.makedirs(target_dir, exist_ok=True)
-
-            cmd = [yt_dlp_path, "-P", target_dir, "--newline"]
-            if proxy:
-                cmd.extend(["--proxy", proxy])
-            if bypass_ssl:
-                cmd.append("--no-check-certificate")
-            cmd.extend(["--remux-video", "mp4"])
-            if ffmpeg_path:
-                cmd.extend(["--ffmpeg-location", os.path.dirname(ffmpeg_path)])
-            cmd.append(url)
-
-            logging.info("Starting process: %s", " ".join(cmd))
-
-            # On Windows, hide the console window of the spawned yt-dlp process
-            popen_kwargs = dict(
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
+            status, message = run_download(
+                url,
+                msg.get("proxy"),
+                msg.get("bypassSsl", True),
+                ffmpeg_path,
             )
-            if IS_WINDOWS:
-                popen_kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-
-            process = subprocess.Popen(cmd, **popen_kwargs)
-
-            while True:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                logging.debug("yt-dlp: %s", line)
-                m = progress_re.search(line)
-                if m:
-                    send_message({"status": "progress", "percentage": m.group(1)})
-
-            _stdout, stderr = process.communicate()
-            return_code = process.returncode
-            logging.info("Process exited with code: %s", return_code)
-
-            if return_code == 0:
-                send_message({
-                    "status": "success",
-                    "message": "视频已下载并保存到 Downloads 文件夹。",
-                    "path": target_dir,
-                })
-            else:
-                err_msg = (stderr or "").strip() or "下载器遇到错误"
-                logging.error("Download failed: %s", err_msg)
-                send_message({"status": "error", "message": f"yt-dlp 报错: {err_msg}"})
-
-            logging.info("Exiting after download finished.")
+            send_message({"status": status, "message": message, "path": downloads_dir()})
+            logging.info("Exiting after download finished (%s).", status)
             sys.stdout.buffer.flush()
             sys.exit(0)
 
