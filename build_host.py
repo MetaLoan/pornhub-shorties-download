@@ -19,7 +19,6 @@ single-machine cross-compile path for PyInstaller. Suggested matrix:
 """
 
 import argparse
-import hashlib
 import io
 import os
 import platform
@@ -211,6 +210,20 @@ def run_pyinstaller(platform_key, output_name: str):
         if final.exists():
             final.unlink()
         produced.rename(final)
+
+    # macOS Gatekeeper would refuse to launch the unsigned bundle (it'd
+    # report Python3.framework as "damaged"). An ad-hoc signature is enough
+    # for user-installed native messaging hosts; for a real release you'd
+    # swap "-" for your Developer ID and notarize afterwards.
+    if platform_key[0] == "macos":
+        log("ad-hoc signing macOS bundle (codesign --force --deep --sign -)")
+        try:
+            subprocess.check_call(["codesign", "--force", "--deep", "--sign", "-", str(final)])
+        except FileNotFoundError:
+            log("WARNING: codesign not found; bundle will likely be blocked by Gatekeeper")
+        except subprocess.CalledProcessError as e:
+            log(f"WARNING: codesign failed ({e}); Gatekeeper may block the bundle")
+
     log(f"OK — {final}")
 
 
