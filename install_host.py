@@ -27,9 +27,10 @@ import sys
 from pathlib import Path
 
 HOST_NAME = "com.shorties.downloader"
-# This is the stable extension ID derived from the public key baked into
-# manifest.json's "key" field. Keep these in sync.
-EXTENSION_ID = "dnhlkggbdnpljeii"
+# Stable extension ID derived from the public key baked into manifest.json's
+# "key" field. The algorithm: SHA-256(SPKI-DER), take first 16 bytes, then
+# map each nibble (4 bits) to a-p — yielding 32 characters.
+EXTENSION_ID = "djnbhglpkggbgibmdnngpklojeepikil"
 ALLOWED_ORIGINS = [f"chrome-extension://{EXTENSION_ID}/"]
 
 ROOT = Path(__file__).resolve().parent

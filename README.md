@@ -10,7 +10,7 @@ users don't need to install anything by hand.
 | Browser extension (`manifest.json`, `background.js`, `popup.*`, `content.*`) | Chrome / Edge / Brave / Vivaldi / Opera / Chromium | MV3 + vanilla JS |
 | Native host (`native_host.py`) | OS process talking stdio with the browser | Python, packaged with PyInstaller |
 
-The extension has a **stable ID** (`dnhlkggbdnpljeii`) baked in via the
+The extension has a **stable ID** (`djnbhglpkggbgibmdnngpklojeepikil`) baked in via the
 `key` field in `manifest.json`, so the native host's `allowed_origins`
 matches on every machine, no matter how the extension was loaded.
 
@@ -40,7 +40,7 @@ matches on every machine, no matter how the extension was loaded.
    - registers it with Chrome / Edge / Brave / Vivaldi / Opera / Chromium.
 3. Install the extension in your browser (load unpacked, or from the
    web store once published). Because the `key` is fixed, the ID will
-   always be `dnhlkggbdnpljeii`.
+   always be `djnbhglpkggbgibmdnngpklojeepikil`.
 
 To uninstall: `python3 install_host.py --uninstall`.
 
